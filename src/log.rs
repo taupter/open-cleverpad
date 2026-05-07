@@ -2,13 +2,14 @@ use crate::app::usb_poll_task;
 use core::sync::atomic::{AtomicBool, Ordering};
 use critical_section::RestoreState;
 use defmt::{Encoder, Logger, global_logger};
-use heapless::{Vec, mpmc::MpMcQueue};
+use heapless::{Vec, mpmc::Queue};
 
 const MAX_BYTES: usize = 128;
 
 static TAKEN: AtomicBool = AtomicBool::new(false);
 static OVERFLOW: AtomicBool = AtomicBool::new(false);
-static BUF: MpMcQueue<Vec<u8, MAX_BYTES>, 64> = MpMcQueue::new();
+#[expect(deprecated)]
+static BUF: Queue<Vec<u8, MAX_BYTES>, 64> = Queue::new();
 static mut ENCODER: Encoder = Encoder::new();
 static mut CS_RESTORE: RestoreState = RestoreState::invalid();
 
@@ -64,6 +65,7 @@ fn write_to_queue(bytes: &[u8]) {
         return;
     }
 
+    #[expect(clippy::result_large_err)]
     let res = Vec::from_slice(bytes).map(|v| BUF.enqueue(v));
 
     if !matches!(res, Ok(Ok(_))) {
@@ -71,6 +73,6 @@ fn write_to_queue(bytes: &[u8]) {
     }
 }
 
-pub fn get_queue() -> &'static MpMcQueue<Vec<u8, MAX_BYTES>, 64> {
+pub fn get_queue() -> &'static Queue<Vec<u8, MAX_BYTES>, 64> {
     &BUF
 }

@@ -29,6 +29,7 @@ mod app {
     use heapless::spsc::{Consumer, Producer, Queue};
     use rtic_monotonics::systick::prelude::*;
     use stm32f1xx_hal::pac::Peripherals;
+    use stm32f1xx_hal::rcc;
     use stm32f1xx_hal::{
         // gpio::gpioa::*,
         gpio::*,
@@ -56,7 +57,7 @@ mod app {
         encoder_parameter_type: ParameterType,
         encoder_parameters: [EncoderParameters; 8],
         abs_encoder_positions: [[u8; 8]; 8],
-        button_event_p: Producer<'static, ButtonEvent, 64>,
+        button_event_p: Producer<'static, ButtonEvent>,
         usb_dev: UsbDevice<'static, UsbBusType>,
         midi: MidiClass<'static, UsbBusType>,
         serial: SerialPort<'static, UsbBusType>,
@@ -68,7 +69,7 @@ mod app {
         button_matrix: ButtonMatrix,
         prev_encoder_positions: [i32; 8],
         prev_button_state: [u8; 11],
-        button_event_c: Consumer<'static, ButtonEvent, 64>,
+        button_event_c: Consumer<'static, ButtonEvent>,
         // debug_pin_pa9: PA9<Output<PushPull>>,
         // debug_pin_pa10: PA10<Output<PushPull>>,
     }
@@ -80,27 +81,24 @@ mod app {
         // Take ownership over the raw flash and rcc devices and convert them into the corresponding
         // HAL structs
         let mut flash = dp.FLASH.constrain();
-        let rcc = dp.RCC.constrain();
 
         // Freeze the configuration of all the clocks in the system and store the frozen frequencies
         // in `clocks`
-        let clocks = rcc
-            .cfgr
-            .use_hse(8.MHz())
-            .sysclk(72.MHz())
-            .pclk1(36.MHz())
-            .freeze(&mut flash.acr);
+        let mut rcc = dp.RCC.freeze(
+            rcc::Config::hse(8.MHz()).sysclk(72.MHz()).pclk1(36.MHz()),
+            &mut flash.acr,
+        );
 
-        assert!(clocks.usbclk_valid());
+        assert!(rcc.clocks.usbclk_valid());
 
         Mono::start(cx.core.SYST, 72_000_000);
 
-        let mut afio = dp.AFIO.constrain();
+        let mut afio = dp.AFIO.constrain(&mut rcc);
 
         // Acquire the GPIO peripherals
-        let mut gpioa = dp.GPIOA.split();
-        let mut gpiob = dp.GPIOB.split();
-        let mut gpioc = dp.GPIOC.split();
+        let mut gpioa = dp.GPIOA.split(&mut rcc);
+        let mut gpiob = dp.GPIOB.split(&mut rcc);
+        let mut gpioc = dp.GPIOC.split(&mut rcc);
 
         // Declare LED GPIOs
         let led_hs_en_l = gpioa
@@ -196,8 +194,8 @@ mod app {
 
         // Queues
         let (button_event_p, button_event_c): (
-            Producer<'static, ButtonEvent, 64>,
-            Consumer<'static, ButtonEvent, 64>,
+            Producer<'static, ButtonEvent>,
+            Consumer<'static, ButtonEvent>,
         ) = cx.local.BUTTON_QUEUE.split();
 
         // USB
