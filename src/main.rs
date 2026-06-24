@@ -27,25 +27,26 @@ mod app {
     use crate::{log, usb_midi};
     use cortex_m::peripheral::NVIC;
     use heapless::spsc::{Consumer, Producer, Queue};
-    use rtic_monotonics::systick::prelude::*;
-    use stm32f1xx_hal::pac::Peripherals;
-    use stm32f1xx_hal::rcc;
+    use rtic_monotonics::stm32::prelude::*;
+    use stm32f1xx_hal::pac::{Peripherals, TIM3};
+    use stm32f1xx_hal::rcc::{self, RccBus};
     use stm32f1xx_hal::{
         // gpio::gpioa::*,
         gpio::*,
         prelude::*,
+        rcc::BusTimerClock,
         usb::{Peripheral, UsbBus, UsbBusType},
     };
     use usb_device::bus;
     use usb_device::prelude::*;
     use usbd_serial::SerialPort;
 
-    systick_monotonic!(Mono, 100_000);
+    stm32_tim3_monotonic!(Mono, 1_000_000);
 
-    const LED_BANK_PERIOD: u32 = 1_000;
-    const ENC_CAPTURE_PERIOD: u32 = 200; // ~5kHz
-    const ENC_EVAL_PERIOD: u32 = 20_000; // ~50Hz
-    const BUTTON_COL_PERIOD: u32 = 10_000; // ~.1kHz
+    const LED_BANK_PERIOD: u64 = 1_000;
+    const ENC_CAPTURE_PERIOD: u64 = 200; // ~5kHz
+    const ENC_EVAL_PERIOD: u64 = 20_000; // ~50Hz
+    const BUTTON_COL_PERIOD: u64 = 10_000; // ~.1kHz
 
     const VID: u16 = 0x1ACC;
     const PID: u16 = 0x3801;
@@ -91,7 +92,7 @@ mod app {
 
         assert!(rcc.clocks.usbclk_valid());
 
-        Mono::start(cx.core.SYST, 72_000_000);
+        Mono::start(<TIM3 as RccBus>::Bus::timer_clock(&rcc.clocks).raw());
 
         let mut afio = dp.AFIO.constrain(&mut rcc);
 
