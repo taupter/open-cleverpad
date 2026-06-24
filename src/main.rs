@@ -46,10 +46,10 @@ mod app {
     stm32_tim3_monotonic!(Mono, 1_000_000);
 
     // Periods should not be multiple of each other. Otherwise there can be flicker.
-    const LED_BANK_PERIOD: u64 = 1_100;
-    const ENC_CAPTURE_PERIOD: u64 = 220; // ~5kHz
-    const ENC_EVAL_PERIOD: u64 = 21_000; // ~50Hz
-    const BUTTON_COL_PERIOD: u64 = 11_500; // ~.1kHz
+    const LED_BANK_PERIOD: u64 = 1_101;
+    const ENC_CAPTURE_PERIOD: u64 = 223; // ~5kHz
+    const ENC_EVAL_PERIOD: u64 = 21_005; // ~50Hz
+    const BUTTON_COL_PERIOD: u64 = 11_507; // ~.1kHz
 
     const VID: u16 = 0x1ACC;
     const PID: u16 = 0x3801;
