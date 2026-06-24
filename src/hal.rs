@@ -1,6 +1,8 @@
 use cortex_m::asm::delay;
 use num_enum::TryFromPrimitive;
 
+use crate::hardware::{Bank, LedsState};
+
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub enum ButtonType {
     Pad { x: u8, y: u8 },
@@ -107,25 +109,34 @@ pub struct LedEvent {
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub enum LedEventType {
     Switch(bool),
-    SwitchColor(LedColor),
+    SwitchColor(PadColor),
 }
 
-pub const COLOR_BLACK: LedColor = LedColor { r: 0, g: 0, b: 0 };
-pub const COLOR_WHITE: LedColor = LedColor { r: 3, g: 3, b: 3 };
-pub const COLOR_YELLOW: LedColor = LedColor { r: 3, g: 3, b: 0 };
-pub const COLOR_AQUA: LedColor = LedColor { r: 0, g: 3, b: 3 };
-pub const COLOR_PURPLE: LedColor = LedColor { r: 3, g: 0, b: 3 };
-pub const COLOR_BLUE: LedColor = LedColor { r: 0, g: 0, b: 3 };
-pub const COLOR_GREEN: LedColor = LedColor { r: 0, g: 3, b: 0 };
-pub const COLOR_RED: LedColor = LedColor { r: 3, g: 0, b: 0 };
+pub const COLOR_BLACK: PadColor = PadColor { r: 0, g: 0, b: 0 };
+pub const COLOR_WHITE: PadColor = PadColor { r: 3, g: 3, b: 3 };
+pub const COLOR_YELLOW: PadColor = PadColor { r: 3, g: 3, b: 0 };
+pub const COLOR_AQUA: PadColor = PadColor { r: 0, g: 3, b: 3 };
+pub const COLOR_PURPLE: PadColor = PadColor { r: 3, g: 0, b: 3 };
+pub const COLOR_BLUE: PadColor = PadColor { r: 0, g: 0, b: 3 };
+pub const COLOR_GREEN: PadColor = PadColor { r: 0, g: 3, b: 0 };
+pub const COLOR_RED: PadColor = PadColor { r: 3, g: 0, b: 0 };
 
+/// Describes a pad's color using RGB values in the range of [0, 3].
+///
+/// The time is divided into 4 slots. The values tell how many of the slots the corresponding LED
+/// should be turned on.
+///
+/// Time slots have different lengths to implement some kind of gamma correction.
 #[derive(Clone, Copy, Debug, defmt::Format)]
-pub struct LedColor {
+pub struct PadColor {
     pub r: u8,
     pub g: u8,
     pub b: u8,
 }
 
+/// Binary RGB value.
+///
+/// Indicates which of the LEDs should be on.
 #[derive(Clone, Copy, Debug, defmt::Format)]
 pub struct Rgb {
     pub r: bool,
@@ -133,19 +144,21 @@ pub struct Rgb {
     pub b: bool,
 }
 
-impl LedColor {
-    pub fn new(r: u8, g: u8, b: u8) -> Option<LedColor> {
+impl PadColor {
+    pub fn new(r: u8, g: u8, b: u8) -> Option<PadColor> {
         if r < 4 && g < 4 && b < 4 {
-            Some(LedColor { r, g, b })
+            Some(PadColor { r, g, b })
         } else {
             None
         }
     }
 
-    pub fn from_value(v: u8) -> LedColor {
-        LedColor::new(v & 0b11, (v & (0b11 << 2)) >> 2, (v & (0b11 << 4)) >> 4).unwrap()
+    /// The 2-bit values for the color components are encoded into the lowest 6 bits.
+    pub fn from_value(v: u8) -> PadColor {
+        PadColor::new(v & 0b11, (v & (0b11 << 2)) >> 2, (v & (0b11 << 4)) >> 4).unwrap()
     }
 
+    /// Calculates which LEDs should be on in each of the 4 cycles.
     pub fn as_rgb(&self) -> [Rgb; 4] {
         let mut rgb = [Rgb {
             r: false,
@@ -192,15 +205,15 @@ impl LedEvent {
         LedEvent { btn, event }
     }
 
-    pub fn apply_to_banks(&self, banks: [[u32; 8]; 4]) -> [[u32; 8]; 4] {
-        let mut new_banks = banks;
+    pub fn apply_to_leds_state(&self, state: LedsState) -> LedsState {
+        let mut new_banks = state;
 
         match (self.event, self.btn) {
             (LedEventType::Switch(s), ButtonType::Master(i)) => {
-                let bank = 7;
+                let bank = Bank::C1 as usize;
                 let bit = 32 - i;
 
-                for new_bank in new_banks.iter_mut() {
+                for new_bank in new_banks.0.iter_mut() {
                     if s {
                         new_bank[bank] |= 1 << bit;
                     } else {
@@ -209,10 +222,11 @@ impl LedEvent {
                 }
             }
             (LedEventType::Switch(s), ButtonType::Arrow(d)) => {
-                let bank = 6;
+                let bank = Bank::C0 as usize;
+
                 let bit = 31 - d as u8;
 
-                for new_bank in new_banks.iter_mut() {
+                for new_bank in new_banks.0.iter_mut() {
                     if s {
                         new_bank[bank] |= 1 << bit;
                     } else {
@@ -221,10 +235,10 @@ impl LedEvent {
                 }
             }
             (LedEventType::Switch(s), ButtonType::Mode(m)) => {
-                let bank = 6;
+                let bank = Bank::C0 as usize;
                 let bit = 27 - m as u8;
 
-                for new_bank in new_banks.iter_mut() {
+                for new_bank in new_banks.0.iter_mut() {
                     if s {
                         new_bank[bank] |= 1 << bit;
                     } else {
@@ -233,10 +247,10 @@ impl LedEvent {
                 }
             }
             (LedEventType::Switch(s), ButtonType::Parameter(p)) => {
-                let bank = 6;
+                let bank = Bank::C0 as usize;
                 let bit = 23 - p as u8;
 
-                for new_bank in new_banks.iter_mut() {
+                for new_bank in new_banks.0.iter_mut() {
                     if s {
                         new_bank[bank] |= 1 << bit;
                     } else {
@@ -245,12 +259,16 @@ impl LedEvent {
                 }
             }
             (LedEventType::SwitchColor(color), ButtonType::Pad { x, y }) => {
-                let (bank_r, bank_g, bank_b) = if y < 4 { (1, 2, 0) } else { (4, 5, 3) };
+                let (bank_r, bank_g, bank_b) = if y < 4 {
+                    (Bank::R0 as usize, Bank::G0 as usize, Bank::B0 as usize)
+                } else {
+                    (Bank::R1 as usize, Bank::G1 as usize, Bank::B1 as usize)
+                };
 
                 let bit = 31 - (((y % 4) * 8) + x);
 
                 for (new_bank, Rgb { r, g, b }) in
-                    new_banks.iter_mut().zip(color.as_rgb().into_iter())
+                    new_banks.0.iter_mut().zip(color.as_rgb().into_iter())
                 {
                     if r {
                         new_bank[bank_r] |= 1 << bit;

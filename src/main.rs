@@ -16,10 +16,12 @@ mod app {
     use crate::hal::ButtonEventEdge::{NegEdge, PosEdge};
     use crate::hal::{
         ButtonEvent, ButtonEventEdge, ButtonType, COLOR_AQUA, COLOR_BLACK, COLOR_BLUE, COLOR_GREEN,
-        COLOR_PURPLE, COLOR_RED, COLOR_WHITE, COLOR_YELLOW, DIRECTION_TYPES, LedColor, LedEvent,
-        LedEventType, MODE_TYPES, ParameterType,
+        COLOR_PURPLE, COLOR_RED, COLOR_WHITE, COLOR_YELLOW, DIRECTION_TYPES, LedEvent,
+        LedEventType, MODE_TYPES, PadColor, ParameterType,
     };
-    use crate::hardware::{ButtonMatrix, ButtonMatrixPins, EncoderPins, Encoders, LedPins, Leds};
+    use crate::hardware::{
+        Bank, ButtonMatrix, ButtonMatrixPins, EncoderPins, Encoders, LedPins, Leds, LedsState,
+    };
     use crate::midi::{
         ControlChange, EncoderMode, EncoderParameters, MidiMessage, NoteOff, NoteOn,
     };
@@ -272,18 +274,18 @@ mod app {
         );
 
         cx.shared.leds.lock(|l| {
-            let banks = l.get_banks();
-            l.set_banks(parameter_led_event.apply_to_banks(banks));
+            let banks = l.get_state();
+            l.set_state(parameter_led_event.apply_to_leds_state(banks));
         });
 
         let mut master_channel: u8 = 1;
-        let mut master_channel_leds = [[[0_u32; 8]; 4]; 8];
+        let mut master_channel_leds_state = [LedsState::default(); 8];
 
         let master_led_event = LedEvent::new(ButtonType::Master(1), LedEventType::Switch(true));
 
         cx.shared.leds.lock(|l| {
-            let banks = l.get_banks();
-            l.set_banks(master_led_event.apply_to_banks(banks));
+            let banks = l.get_state();
+            l.set_state(master_led_event.apply_to_leds_state(banks));
         });
 
         loop {
@@ -308,22 +310,23 @@ mod app {
                         cx.shared.midi.lock(|m| m.enqueue(midi).unwrap());
                         usb_poll_task::spawn().ok();
                     }
-                    ButtonType::Master(channel) => {
+                    ButtonType::Master(new_channel) => {
                         if on {
                             // switch midi channel for pads
                             cx.shared.leds.lock(|l| {
-                                for i in 0..6 {
-                                    for (j, v) in l.get_bank_value(i).into_iter().enumerate() {
-                                        master_channel_leds[master_channel as usize - 1][j][i] = v;
-                                    }
-
-                                    l.set_bank_value(
+                                // Set channel LED state for all Pad banks
+                                for i in 0..Bank::C0 as usize {
+                                    l.set_bank_slot_values(
                                         i,
                                         [
-                                            master_channel_leds[channel as usize - 1][0][i],
-                                            master_channel_leds[channel as usize - 1][1][i],
-                                            master_channel_leds[channel as usize - 1][2][i],
-                                            master_channel_leds[channel as usize - 1][3][i],
+                                            master_channel_leds_state[new_channel as usize - 1].0
+                                                [0][i],
+                                            master_channel_leds_state[new_channel as usize - 1].0
+                                                [1][i],
+                                            master_channel_leds_state[new_channel as usize - 1].0
+                                                [2][i],
+                                            master_channel_leds_state[new_channel as usize - 1].0
+                                                [3][i],
                                         ],
                                     );
                                 }
@@ -335,12 +338,12 @@ mod app {
                                 let master_on_event =
                                     LedEvent::new(e.btn, LedEventType::Switch(true));
 
-                                let mut banks = l.get_banks();
-                                banks = master_off_event.apply_to_banks(banks);
-                                banks = master_on_event.apply_to_banks(banks);
-                                l.set_banks(banks);
+                                let mut banks = l.get_state();
+                                banks = master_off_event.apply_to_leds_state(banks);
+                                banks = master_on_event.apply_to_leds_state(banks);
+                                l.set_state(banks);
 
-                                master_channel = channel;
+                                master_channel = new_channel;
                             })
                         }
                     }
@@ -361,10 +364,10 @@ mod app {
                             });
 
                             cx.shared.leds.lock(|l| {
-                                let mut banks = l.get_banks();
-                                banks = parameter_off_event.apply_to_banks(banks);
-                                banks = parameter_on_event.apply_to_banks(banks);
-                                l.set_banks(banks);
+                                let mut banks = l.get_state();
+                                banks = parameter_off_event.apply_to_leds_state(banks);
+                                banks = parameter_on_event.apply_to_leds_state(banks);
+                                l.set_state(banks);
                             });
                         }
                     }
@@ -423,7 +426,7 @@ mod app {
                                         _ => unreachable!(),
                                     }
                                 }
-                                num => LedColor::from_value(num),
+                                num => PadColor::from_value(num),
                             };
 
                             if x < 8 && y < 8 {
@@ -544,13 +547,12 @@ mod app {
                     defmt::info!("Handle {}", le);
                     if channel == master_channel {
                         cx.shared.leds.lock(|l| {
-                            let banks = l.get_banks();
-                            l.set_banks(le.apply_to_banks(banks));
+                            let banks = l.get_state();
+                            l.set_state(le.apply_to_leds_state(banks));
                         });
-                    } else {
-                        master_channel_leds[channel as usize - 1] =
-                            le.apply_to_banks(master_channel_leds[channel as usize - 1])
                     }
+                    master_channel_leds_state[channel as usize - 1] =
+                        le.apply_to_leds_state(master_channel_leds_state[channel as usize - 1])
                 }
             }
         }
@@ -560,10 +562,10 @@ mod app {
     async fn led_bank(mut cx: led_bank::Context) {
         loop {
             let baseline = Mono::now();
-            let current_iteration: usize = cx.shared.leds.lock(|leds| leds.write_next_bank());
+            let current_time_slot: usize = cx.shared.leds.lock(|leds| leds.write_next_bank());
 
             // Gamma correction (~2.8)
-            let delay = match current_iteration {
+            let delay = match current_time_slot {
                 0 => LED_BANK_PERIOD.micros() / 50,
                 1 => LED_BANK_PERIOD.micros() / 50 * 6,
                 2 => LED_BANK_PERIOD.micros() / 50 * 15,

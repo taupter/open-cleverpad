@@ -257,54 +257,76 @@ pub struct EncoderPins {
     pub b: PA0<Input<Floating>>,
 }
 
+pub const NUM_TIME_SLOTS: usize = 4;
+pub const NUM_BANKS: usize = 8;
+
+#[derive(Clone, Copy)]
+#[repr(usize)]
+pub enum Bank {
+    B0 = 0,
+    R0 = 1,
+    G0 = 2,
+    B1 = 3,
+    R1 = 4,
+    G1 = 5,
+    C0 = 6,
+    C1 = 7,
+}
+
+#[derive(Default, Copy, Clone)]
+pub struct LedsState(pub [[u32; NUM_BANKS]; NUM_TIME_SLOTS]);
+
 pub struct Leds {
     pins: LedPins,
-    banks: [[u32; 8]; 4],
+    state: LedsState,
     current_bank: usize,
-    current_iteration: usize,
+    current_time_slot: usize,
 }
 
 impl Leds {
     pub fn new(pins: LedPins) -> Self {
         Leds {
             pins,
-            banks: [[0; 8]; 4],
+            state: Default::default(),
             current_bank: 0,
-            current_iteration: 0,
+            current_time_slot: 0,
         }
     }
 
-    pub fn get_banks(&mut self) -> [[u32; 8]; 4] {
-        self.banks
+    pub fn get_state(&mut self) -> LedsState {
+        self.state
     }
 
-    pub fn get_bank_value(&mut self, bank: usize) -> [u32; 4] {
+    /// Gets the bank values for all time slots
+    pub fn get_bank_slot_values(&mut self, bank: usize) -> [u32; NUM_TIME_SLOTS] {
         [
-            self.banks[0][bank],
-            self.banks[1][bank],
-            self.banks[2][bank],
-            self.banks[3][bank],
+            self.state.0[0][bank],
+            self.state.0[1][bank],
+            self.state.0[2][bank],
+            self.state.0[3][bank],
         ]
     }
 
-    pub fn set_banks(&mut self, banks: [[u32; 8]; 4]) {
-        self.banks = banks;
+    pub fn set_state(&mut self, state: LedsState) {
+        self.state = state;
     }
 
-    pub fn set_bank_value(&mut self, bank: usize, value: [u32; 4]) {
+    /// Sets the bank values for all time slots
+    pub fn set_bank_slot_values(&mut self, bank: usize, value: [u32; NUM_TIME_SLOTS]) {
         for (i, v) in value.into_iter().enumerate() {
-            self.banks[i][bank] = v;
+            self.state.0[i][bank] = v;
         }
     }
 
+    /// Returns the number of the current time slot.
     pub fn write_next_bank(&mut self) -> usize {
         self.current_bank += 1;
-        if self.current_bank == 8 {
+        if self.current_bank == NUM_BANKS {
             self.current_bank = 0;
 
-            self.current_iteration += 1;
-            if self.current_iteration == 4 {
-                self.current_iteration = 0;
+            self.current_time_slot += 1;
+            if self.current_time_slot == NUM_TIME_SLOTS {
+                self.current_time_slot = 0;
             }
         }
 
@@ -328,7 +350,7 @@ impl Leds {
         }
 
         for i in 0..32 {
-            if self.banks[self.current_iteration][self.current_bank] & (1 << i) == 0 {
+            if self.state.0[self.current_time_slot][self.current_bank] & (1 << i) == 0 {
                 self.pins.ls_dai.set_low();
             } else {
                 self.pins.ls_dai.set_high();
@@ -347,7 +369,7 @@ impl Leds {
         self.pins.ls_en_l.set_low();
         self.pins.hs_en_l.set_low();
 
-        self.current_iteration
+        self.current_time_slot
     }
 }
 
